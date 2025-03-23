@@ -130,3 +130,6 @@ if __name__ == "__main__":  # to fix multiprocessing issue
     print("Accuracy for test dataset:")
     check_accuracy(test_loader,model)
 
+    torch.save(model.state_dict(),'model.pth')
+    print("model saved as model.pth")
+
