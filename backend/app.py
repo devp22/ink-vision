@@ -1,87 +1,73 @@
-from flask import Flask,request,jsonify,send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
-import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader
 import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F 
-import torch
+import torch.nn.functional as F
 from PIL import Image, ImageOps
-from torchvision.transforms.functional import pad
-import matplotlib.pyplot as plt
 import io
 
-'''Neural Network Class'''
+# Define the CNN model
 class CNN(nn.Module):
-    def __init__(self,input_size=1,output_size=10): 
-        super(CNN,self).__init__()
-        # self.layer1 = nn.Linear(input_size,50)
-        # self.layer2 = nn.Linear(50,50)
-        # self.layer3 = nn.Linear(50,output_size)
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 8, 3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(8, 16, 3, padding=1)
+        self.fc1 = nn.Linear(16 * 7 * 7, 10)
 
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=8, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        # Same convolutions -> output -> same as input dimension
-        
-        self.pool = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2))
-        self.conv2 = nn.Conv2d(in_channels=8, out_channels=16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        # last conv out was 8 so this conv input is 8.
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 7 * 7)
+        return self.fc1(x)
 
-        self.fc1 = nn.Linear(16*7*7, output_size)
-        # in fc1 -> 16 bcoz that is outchannel in conv2 and 7*7 because -> 2 poolings will make it (28/2)/2 => 7
-
-    
-    def forward(self,input_tensor): #In PyTorch, when defining a neural network using nn.Module, the standard method name for the forward pass is forward(). This is because PyTorch internally calls forward() when you pass data through the model. If you name the method anything other than forward(), PyTorch won't automatically call it
-        # output_tensor = F.relu(self.layer1(input_tensor)) # put input tensor in layer 1 and then apply relu activation function
-        # output_tensor = F.relu(self.layer2(output_tensor))
-        # output_tensor = self.layer3(output_tensor)
-        # return output_tensor
-
-        output_tensor = F.relu(self.conv1(input_tensor))
-        output_tensor = self.pool(output_tensor)
-        output_tensor = F.relu(self.conv2(output_tensor))
-        output_tensor = self.pool(output_tensor)
-        output_tensor = output_tensor.reshape(output_tensor.shape[0], -1)
-        output_tensor = self.fc1(output_tensor)
-
-        return output_tensor
-    
+# Set up Flask
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
+# Load model
 model = CNN()
-model.load_state_dict(torch.load('model.pth'))
+model.load_state_dict(torch.load("model.pth", map_location=torch.device("cpu")))
 model.eval()
-transFormer = transforms.Compose([
-        # transforms.Grayscale(),
-        # transforms.Resize((28,28)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,),(0.3081,)) # Normalization is done with mean (0.1307) and std (0.308)
-        ])
 
-@app.route('/')
-def main_app():
-    return send_from_directory(app.static_folder,'index.xhtml')
+# Transform for MNIST-style input
+transformer = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.1307,), (0.3081,))
+])
 
-@app.route('/predict',methods=['POST'])
+@app.route('/predict', methods=['POST'])
 def predict_digit():
     if 'file' not in request.files:
-        return jsonify({'error':'No File Detected'}),400
-    
-    file = request.files['file']
-    image = Image.open(io.BytesIO(file.read())).convert("L")
-    image = ImageOps.invert(image)
-    image = image.resize((28, 28))
+        return jsonify({'error': 'No file provided'}), 400
 
-    image_tensor = transFormer(image).unsqueeze(0)
+    file = request.files['file']
+    image = Image.open(io.BytesIO(file.read())).convert("RGBA")
+
+    # Flatten alpha channel to white background
+    white_bg = Image.new("RGBA", image.size, (255, 255, 255, 255))
+    image = Image.alpha_composite(white_bg, image).convert("L")
+
+    # Resize & pad like MNIST
+    image = ImageOps.invert(image)
+    image = image.resize((20, 20))
+    final_image = Image.new("L", (28, 28), 255)
+    final_image.paste(image, (4, 4))
+
+    image_tensor = transformer(final_image).unsqueeze(0)
 
     with torch.no_grad():
         output = model(image_tensor)
-        predicted_digit = torch.argmax(output,dim=1)
-        print("digit is: "+str(predicted_digit.item()))
+        pred = torch.argmax(output, dim=1).item()
+        confidence = torch.softmax(output, dim=1)[0][pred].item()
 
-    return jsonify({'digit is: ':str(predicted_digit.item())})
+    print(f"Predicted {pred} with confidence {confidence:.2f}")
+
+    return jsonify({
+        'prediction': pred,
+        'confidence': round(confidence, 2)
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)
