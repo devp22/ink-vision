@@ -45,7 +45,7 @@ class CNN(nn.Module):
 
         return output_tensor
 
-image = Image.open('test_images/test_image3.png').convert("L")
+image = Image.open('test_images/test_image6.png').convert("L")
 image = ImageOps.invert(image)
 image = image.resize((28, 28))
 # image = pad(image, padding=4, fill=0, padding_mode='constant')  # total = 28x28

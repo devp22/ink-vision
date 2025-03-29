@@ -7,3 +7,4 @@ opencv-python
 pillow
 scipy
 matplotlib
+flask_cors
